@@ -13,9 +13,10 @@ jobs:
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL
           df -h /
 
-      - name: Kodni yuklab olish (submodule bilan)
+      - name: Telegram manba kodini yuklab olish (submodule bilan)
         uses: actions/checkout@v4
         with:
+          repository: DrKLO/Telegram
           submodules: recursive
 
       - name: Java 17
@@ -35,4 +36,61 @@ jobs:
         run: |
           NDK_VERSION=$(grep -rhoE 'ndkVersion[ =]+"[^"]+"' --include=build.gradle . | head -1 | grep -oE '[0-9]+(\.[0-9]+)+' || true)
           NDK_VERSION=${NDK_VERSION:-27.2.12479018}
-          echo "NDK versiyasi: $NDK_VER
+          echo "NDK versiyasi: $NDK_VERSION"
+          sdkmanager "ndk;$NDK_VERSION"
+          echo "NDK=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - name: Native kutubxonalar (libvpx, ffmpeg, boringssl)
+        working-directory: TMessagesProj/jni
+        run: |
+          export ANDROID_NDK_HOME="$NDK" ANDROID_NDK_ROOT="$NDK" ANDROID_NDK="$NDK"
+          for s in build_libvpx_clang.sh build_ffmpeg_clang.sh patch_ffmpeg.sh patch_boringssl.sh build_boringssl.sh; do
+            if [ -f "$s" ]; then
+              echo "=== $s ==="
+              chmod +x "$s"
+              ./"$s"
+            else
+              echo "topilmadi (o'tkazib yuborildi): $s"
+            fi
+          done
+
+      - name: API kalit va REDgram nomini kiritish
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+        run: |
+          if [ -z "$TG_API_ID" ] || [ -z "$TG_API_HASH" ]; then
+            echo "Secrets (TG_API_ID, TG_API_HASH) kiritilmagan"; exit 1
+          fi
+          BV=TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java
+          sed -i "s/APP_ID = .*/APP_ID = ${TG_API_ID};/" "$BV"
+          sed -i "s/APP_HASH = .*/APP_HASH = \"${TG_API_HASH}\";/" "$BV"
+          sed -i -E 's#(<string name="AppName(Beta)?">).*(</string>)#\1REDgram\3#' TMessagesProj/src/main/res/values/strings.xml
+          grep -n 'name="AppName' TMessagesProj/src/main/res/values/strings.xml
+
+      - name: Gradle sozlamalari
+        run: |
+          chmod +x gradlew
+          echo "" >> gradle.properties
+          echo "org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=2g" >> gradle.properties
+
+      - name: APK yig'ish
+        run: ./gradlew :TMessagesProj_App:assembleAfatDebug --stacktrace --no-daemon
+
+      - name: APK ni imzolash
+        run: |
+          APK=$(find TMessagesProj_App/build/outputs/apk/afat/debug -name "*.apk" | head -1)
+          echo "Topilgan APK: $APK"
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          keytool -genkeypair -keystore redgram.jks -storepass redgram123 -keypass redgram123 \
+            -alias redgram -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=REDgram"
+          "$BT/zipalign" -f -p 4 "$APK" aligned.apk
+          "$BT/apksigner" sign --ks redgram.jks --ks-pass pass:redgram123 --key-pass pass:redgram123 \
+            --out REDgram.apk aligned.apk
+          ls -lh REDgram.apk
+
+      - name: REDgram.apk ni yuklash
+        uses: actions/upload-artifact@v4
+        with:
+          name: REDgram-APK
+          path: REDgram.apk
