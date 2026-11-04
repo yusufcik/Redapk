@@ -63,8 +63,9 @@ jobs:
             echo "Secrets (TG_API_ID, TG_API_HASH) kiritilmagan"; exit 1
           fi
           BV=TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java
-          sed -i "s/APP_ID = .*/APP_ID = ${TG_API_ID};/" "$BV"
-          sed -i "s/APP_HASH = .*/APP_HASH = \"${TG_API_HASH}\";/" "$BV"
+          sed -i -E "s/(int APP_ID = ).*/\1${TG_API_ID};/" "$BV"
+          sed -i -E "s/(String APP_HASH = ).*/\1\"${TG_API_HASH}\";/" "$BV"
+          grep -nE "int APP_ID|String APP_HASH|HUAWEI_APP_ID" "$BV" | sed -E 's/"[0-9a-f]{32}"/"***"/'
           sed -i -E 's#(<string name="AppName(Beta)?">).*(</string>)#\1REDgram\3#' TMessagesProj/src/main/res/values/strings.xml
           grep -n 'name="AppName' TMessagesProj/src/main/res/values/strings.xml
 
