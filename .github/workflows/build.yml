@@ -19,6 +19,113 @@ jobs:
           repository: DrKLO/Telegram
           submodules: recursive
 
+      - name: O'z repozitoriyimni yuklash (logotip fayli uchun)
+        uses: actions/checkout@v4
+        with:
+          path: own
+
+      - name: REDgram - logotip, sarlavha va qizil-qora mavzu
+        run: |
+          set -e
+          LOGO=own/redgram_logo.jpg
+          if [ ! -f "$LOGO" ]; then
+            echo "::error::redgram_logo.jpg repozitoriyning asosiy papkasida yo'q"; exit 1
+          fi
+          sudo apt-get install -y imagemagick > /dev/null
+          if command -v magick > /dev/null; then IM="magick"; ID="magick identify"; else IM="convert"; ID="identify"; fi
+
+          echo "=== 1) LOGOTIP ==="
+          $IM "$LOGO" -crop 720x720+128+140 +repage logo_square.png
+          RES=TMessagesProj/src/main/res
+          # eski usuldagi (kvadrat/yumaloq) ikonlar
+          find TMessagesProj* -path '*/res/mipmap-*' \( -name ic_launcher.png -o -name ic_launcher_round.png \) | while read -r f; do
+            SZ=$($ID -format "%wx%h" "$f")
+            $IM logo_square.png -resize "${SZ}!" "$f"
+            echo "almashtirildi: $f ($SZ)"
+          done
+          # adaptiv ikon (Android 8+): qora fon + logotip
+          mkdir -p "$RES/drawable-nodpi" "$RES/values"
+          $IM logo_square.png -resize 270x270 -background none -gravity center -extent 432x432 "$RES/drawable-nodpi/redgram_icon_fg.png"
+          printf '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="redgram_icon_bg">#0A0C10</color>\n</resources>\n' > "$RES/values/redgram_colors.xml"
+          find TMessagesProj* -path '*/res/mipmap-anydpi*' \( -name ic_launcher.xml -o -name ic_launcher_round.xml \) | while read -r f; do
+            printf '<?xml version="1.0" encoding="utf-8"?>\n<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n    <background android:drawable="@color/redgram_icon_bg"/>\n    <foreground android:drawable="@drawable/redgram_icon_fg"/>\n</adaptive-icon>\n' > "$f"
+            echo "adaptiv ikon: $f"
+          done
+          grep -rn 'android:icon\|android:roundIcon' TMessagesProj*/src/main/AndroidManifest.xml | head -5 || true
+
+          echo "=== 2) SARLAVHA (Telegram -> REDgram) ==="
+          DA=$(find TMessagesProj/src/main/java -name DialogsActivity.java | head -1)
+          sed -i -E 's/LocaleController\.getString\((R\.string\.AppName(Beta)?|"AppName(Beta)?", *R\.string\.AppName(Beta)?)\)/"REDgram"/g' "$DA"
+          if grep -q '"REDgram"' "$DA"; then
+            grep -n '"REDgram"' "$DA"
+          else
+            echo "::warning::DialogsActivity.java ichida AppName topilmadi"
+            grep -n 'AppName' "$DA" || true
+          fi
+
+          echo "=== 3) QIZIL-QORA MAVZU ==="
+          python3 - <<'PY'
+          import glob, os
+
+          ASSETS = "TMessagesProj/src/main/assets"
+          BLACK, SURF, SURF2 = "#000000", "#0d0d10", "#17171b"
+          RED, RED2, DRED = "#e11d2e", "#ff3b4a", "#7f1220"
+          WHITE, GRAY = "#ffffff", "#8e8e96"
+
+          OVR = {}
+          def put(keys, val):
+              for k in keys.split():
+                  OVR[k] = val
+
+          put("windowBackgroundWhite dialogBackground chats_menuBackground chat_messagePanelBackground chat_emojiPanelBackground chat_topPanelBackground", BLACK)
+          put("windowBackgroundGray dialogBackgroundGray chat_wallpaper chats_archiveBackground", "#050506")
+          put("actionBarDefault actionBarActionModeDefault actionBarActionModeDefaultTop actionBarDefaultArchived", BLACK)
+          put("actionBarDefaultIcon actionBarDefaultTitle actionBarDefaultSubtitle actionBarDefaultSearch actionBarActionModeDefaultIcon actionBarActionModeDefaultTitle chats_menuName chats_menuPhone chats_menuItemText chats_menuItemIcon", WHITE)
+          put("actionBarDefaultSearchPlaceholder actionBarTabUnactiveText chats_message chats_message_threeLines chats_date chats_menuPhoneShadow chat_messagePanelHint chat_messagePanelIcons chat_inTimeText chat_outTimeText windowBackgroundWhiteGrayText windowBackgroundWhiteGrayText2 windowBackgroundWhiteGrayText3 windowBackgroundWhiteGrayText4 windowBackgroundWhiteGrayText5 windowBackgroundWhiteGrayText6 windowBackgroundWhiteGrayText7 windowBackgroundWhiteGrayText8 dialogTextGray dialogTextGray2 dialogTextGray3 dialogTextGray4 dialogTextHint", GRAY)
+          put("windowBackgroundWhiteBlackText chats_name chats_nameMessage chats_nameMessage_threeLines chats_secretName chat_messagePanelText chat_messageTextIn chat_messageTextOut dialogTextBlack dialogTextBlack2 profile_title chat_inReplyMessageText chat_inReplyMediaMessageText", WHITE)
+          put("actionBarDefaultSelector actionBarActionModeDefaultSelector actionBarTabSelector listSelector dialogButtonSelector", "#33e11d2e")
+          put("actionBarTabActiveText actionBarTabLine windowBackgroundWhiteBlueText windowBackgroundWhiteBlueText2 windowBackgroundWhiteBlueText3 windowBackgroundWhiteBlueText4 windowBackgroundWhiteBlueText5 windowBackgroundWhiteBlueText6 windowBackgroundWhiteBlueText7 windowBackgroundWhiteBlueHeader windowBackgroundWhiteBlueButton windowBackgroundWhiteBlueIcon windowBackgroundWhiteLinkText windowBackgroundWhiteInputFieldActivated dialogTextBlue dialogTextBlue2 dialogTextBlue3 dialogTextBlue4 dialogTextLink dialogButton dialogInputFieldActivated dialogLineProgress dialogRadioBackgroundChecked dialogCheckboxSquareBackground chats_actionBackground chats_unreadCounter chats_tabUnreadActiveBackground chats_verifiedBackground chats_sentCheck chats_sentReadCheck chats_menuTopBackground chat_messagePanelSend chat_messagePanelVoiceBackground chat_serviceIcon chat_unreadMessagesStartText chat_inReplyNameText chat_inReplyLine chat_inPreviewLine chat_messageLinkIn chat_messageLinkOut chat_inLoader chat_inAudioProgress chat_inFileProgress profile_actionBackground profile_verifiedBackground switchTrackBlueChecked switchTrackBlueThumbChecked avatar_backgroundActionBarBlue avatar_actionBarSelectorBlue", RED)
+          put("chats_actionPressedBackground chats_unreadCounterMuted chat_outBubbleSelected chat_inBubbleSelected switchTrackChecked chat_outPreviewLine chat_outReplyLine", DRED)
+          put("chats_actionIcon chats_unreadCounterText chat_outSentCheck chat_outSentCheckRead chat_outSentCheckSelected chat_outReplyNameText chat_outReplyMessageText chat_outLoader chat_outAudioProgress chat_outFileProgress chat_serviceText chat_serviceLink profile_actionIcon switchTrackBlueThumb switchTrackBlueThumbChecked", WHITE)
+          put("chat_outBubble chat_outBubbleGradient chat_outBubbleGradient2 chat_outBubbleGradient3", "#b3121f")
+          put("chat_inBubble", SURF2)
+          put("chat_serviceBackground chat_unreadMessagesStartBackground", "#99111114")
+          put("divider windowBackgroundGrayShadow", "#26ffffff")
+          put("windowBackgroundWhiteInputField dialogInputField chat_messagePanelShadow", "#40ffffff")
+          put("switchTrack switchTrackBlue", "#3a3a40")
+          put("chats_pinnedIcon chats_sentClock chat_outSentClock", GRAY)
+
+          def split(data):
+              i = data.find(b"\nWPS\n")
+              if i >= 0:
+                  return data[:i + 1]
+              return data if data.endswith(b"\n") else data + b"\n"
+
+          files = sorted(glob.glob(ASSETS + "/*.attheme"))
+          print("mavzu fayllari:", [os.path.basename(f) for f in files])
+          base = None
+          for n in ("night.attheme", "darkblue.attheme"):
+              p = os.path.join(ASSETS, n)
+              if os.path.exists(p):
+                  base = split(open(p, "rb").read())
+                  print("asos:", n)
+                  break
+
+          for p in files:
+              head = base if base is not None else split(open(p, "rb").read())
+              keep = []
+              for line in head.split(b"\n"):
+                  if not line.strip():
+                      continue
+                  key = line.split(b"=")[0].decode("latin1").strip()
+                  if key not in OVR:
+                      keep.append(line)
+              out = b"\n".join(keep) + b"\n"
+              out += "".join("%s=%s\n" % (k, v) for k, v in OVR.items()).encode()
+              open(p, "wb").write(out)
+              print("yangilandi:", os.path.basename(p))
+          PY
+
       - name: Java 17
         uses: actions/setup-java@v4
         with:
