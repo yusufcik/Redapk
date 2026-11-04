@@ -26,8 +26,8 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - name: Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Android SDK litsenziyalari
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
 
       - name: Qurilish vositalari
         run: sudo apt-get update && sudo apt-get install -y yasm nasm ninja-build cmake golang-go perl
@@ -37,7 +37,7 @@ jobs:
           NDK_VERSION=$(grep -rhoE 'ndkVersion[ =]+"[^"]+"' --include=build.gradle . | head -1 | grep -oE '[0-9]+(\.[0-9]+)+' || true)
           NDK_VERSION=${NDK_VERSION:-27.2.12479018}
           echo "NDK versiyasi: $NDK_VERSION"
-          sdkmanager "ndk;$NDK_VERSION"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION"
           echo "NDK=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
 
       - name: Native kutubxonalar (libvpx, ffmpeg, boringssl)
