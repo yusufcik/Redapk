@@ -55,9 +55,9 @@ jobs:
 
           echo "=== 2) SARLAVHA (Telegram -> REDgram) ==="
           DA=$(find TMessagesProj/src/main/java -name DialogsActivity.java | head -1)
-          sed -i -E 's/LocaleController\.getString\((R\.string\.AppName(Beta)?|"AppName(Beta)?", *R\.string\.AppName(Beta)?)\)/"REDgram"/g' "$DA"
-          if grep -q '"REDgram"' "$DA"; then
-            grep -n '"REDgram"' "$DA"
+          sed -i 's/new SpannableStringBuilder(getString(R.string.AppName))/new SpannableStringBuilder("REDgram")/' "$DA"
+          if grep -q 'new SpannableStringBuilder("REDgram")' "$DA"; then
+            grep -n 'new SpannableStringBuilder("REDgram")' "$DA"
           else
             echo "::warning::DialogsActivity.java ichida AppName topilmadi"
             grep -n 'AppName' "$DA" || true
