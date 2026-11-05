@@ -11,6 +11,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Free up disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/local/lib/android/sdk/ndk/25.* /usr/local/lib/android/sdk/ndk/26.* /usr/local/lib/android/sdk/ndk/27.*
+          sudo docker image prune --all --force
+          df -h /
+
       - name: Checkout Telegram source
         uses: actions/checkout@v4
         with:
@@ -45,7 +56,6 @@ jobs:
           "$SDKM" "build-tools;35.0.0"
           "$SDKM" "ndk;21.4.7075529"
           "$SDKM" "cmake;3.10.2.4988404"
-          "$SDKM" "cmake;3.22.1"
           "$SDKM" --list_installed
 
       - name: Set Telegram API keys
