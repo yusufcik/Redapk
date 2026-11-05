@@ -6,6 +6,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -94,13 +97,6 @@ jobs:
             --stacktrace \
             --no-daemon
 
-      - name: Upload unsigned AAB
-        uses: actions/upload-artifact@v4
-        with:
-          name: REDgram-unsigned-AAB
-          path: TMessagesProj_App/build/outputs/bundle/**/*.aab
-          if-no-files-found: error
-
       - name: Sign AAB
         env:
           KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
@@ -133,9 +129,19 @@ jobs:
           mkdir -p output
           cp "$AAB" output/REDgram.aab
 
-      - name: Upload REDgram AAB
+          rm -f redgram-upload.jks
+
+      - name: Upload REDgram AAB (artifact)
         uses: actions/upload-artifact@v4
         with:
           name: REDgram-AAB
           path: output/REDgram.aab
+          compression-level: 0
           if-no-files-found: error
+
+      - name: Create GitHub Release (zip'siz .aab)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: REDgram build ${{ github.run_number }}
+          files: output/REDgram.aab
