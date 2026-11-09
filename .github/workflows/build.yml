@@ -88,6 +88,23 @@ jobs:
             sed -i 's/new SpannableStringBuilder(getString(R.string.AppName))/new SpannableStringBuilder("REDgram")/' "$FILE"
           fi
 
+      - name: Change package name
+        run: |
+          NEW_PKG="com.yusufcik.redgram"
+
+          FILE="TMessagesProj_App/build.gradle"
+          echo "ESKI:"
+          grep -n "applicationId" "$FILE" || true
+
+          sed -i -E "s/applicationId[ =]+\"[^\"]+\"/applicationId \"$NEW_PKG\"/" "$FILE"
+
+          echo "YANGI:"
+          grep -n "applicationId" "$FILE"
+          grep -q "$NEW_PKG" "$FILE" || { echo "Paket nomi almashmadi"; exit 1; }
+
+          find . -name "google-services.json" -not -path "*/build/*" -print0 |
+          xargs -0 -r sed -i -E "s/\"package_name\": *\"[^\"]+\"/\"package_name\": \"$NEW_PKG\"/"
+
       - name: Prepare Gradle
         run: chmod +x gradlew
 
