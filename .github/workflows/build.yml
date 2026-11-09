@@ -92,16 +92,22 @@ jobs:
         run: |
           NEW_PKG="com.yusufcik.redgram"
 
-          FILE="TMessagesProj_App/build.gradle"
           echo "ESKI:"
-          grep -n "applicationId" "$FILE" || true
+          grep -rn "APP_PACKAGE" gradle.properties TMessagesProj_App/build.gradle || true
 
-          sed -i -E "s/applicationId[ =]+\"[^\"]+\"/applicationId \"$NEW_PKG\"/" "$FILE"
+          # 1) APP_PACKAGE qiymatini almashtirish
+          sed -i -E "s/^([[:space:]]*APP_PACKAGE[[:space:]]*=[[:space:]]*).*/\1$NEW_PKG/" gradle.properties
+
+          # 2) .beta / .web qo'shimchalarini olib tashlash
+          sed -i '/applicationIdSuffix/d' TMessagesProj_App/build.gradle
 
           echo "YANGI:"
-          grep -n "applicationId" "$FILE"
-          grep -q "$NEW_PKG" "$FILE" || { echo "Paket nomi almashmadi"; exit 1; }
+          grep -n "APP_PACKAGE" gradle.properties
+          grep -n "applicationIdSuffix" TMessagesProj_App/build.gradle || echo "suffix yo'q"
 
+          grep -qE "APP_PACKAGE[[:space:]]*=[[:space:]]*$NEW_PKG" gradle.properties || { echo "Paket nomi almashmadi"; exit 1; }
+
+          # 3) Firebase fayli bo'lsa
           find . -name "google-services.json" -not -path "*/build/*" -print0 |
           xargs -0 -r sed -i -E "s/\"package_name\": *\"[^\"]+\"/\"package_name\": \"$NEW_PKG\"/"
 
