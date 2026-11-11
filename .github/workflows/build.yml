@@ -111,6 +111,18 @@ jobs:
           find . -name "google-services.json" -not -path "*/build/*" -print0 |
           xargs -0 -r sed -i -E "s/\"package_name\": *\"[^\"]+\"/\"package_name\": \"$NEW_PKG\"/"
 
+      - name: Set unique version code
+        run: |
+          # Play har yuklashda versionCode oshishini talab qiladi
+          NEW_CODE=$((10000 + GITHUB_RUN_NUMBER))
+          echo "Eski:"
+          grep -n "APP_VERSION_CODE" gradle.properties || echo "APP_VERSION_CODE topilmadi"
+
+          sed -i -E "s/^([[:space:]]*APP_VERSION_CODE[[:space:]]*=[[:space:]]*).*/\1$NEW_CODE/" gradle.properties
+
+          echo "Yangi:"
+          grep -n "APP_VERSION_CODE" gradle.properties || echo "OGOHLANTIRISH: versionCode almashmadi"
+
       - name: Prepare Gradle
         run: chmod +x gradlew
 
@@ -141,6 +153,9 @@ jobs:
             exit 1
           fi
 
+          # Eski (Gradle qo'ygan) imzolarni o'chirish
+          zip -d "$AAB" 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.DSA' 'META-INF/*.EC' || true
+
           jarsigner \
             -keystore redgram-upload.jks \
             -storepass "$KEYSTORE_PASSWORD" \
@@ -148,6 +163,15 @@ jobs:
             "$AAB" "$KEY_ALIAS"
 
           jarsigner -verify "$AAB"
+
+          # Tekshiruv 1: aynan bitta imzo bo'lishi kerak
+          SIGS=$(unzip -l "$AAB" | grep -cE 'META-INF/.*\.SF$' || true)
+          echo "Imzolar soni: $SIGS"
+          [ "$SIGS" = "1" ] || { echo "XATO: imzolar soni 1 emas"; exit 1; }
+
+          # Tekshiruv 2: paket nomi to'g'ri bo'lishi kerak
+          unzip -p "$AAB" base/manifest/AndroidManifest.xml | grep -aq "com.yusufcik.redgram" \
+            || { echo "XATO: AAB ichida paket nomi com.yusufcik.redgram emas"; exit 1; }
 
           mkdir -p output
           cp "$AAB" output/REDgram.aab
