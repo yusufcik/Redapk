@@ -29,21 +29,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: DrKLO/Telegram
-          ref: master
+          # Barqaror bo'lishi uchun: GitHub > Settings > Variables > Actions ga
+          # TG_REF nomli o'zgaruvchi qo'shing va qiymatiga commit SHA yozing.
+          # Bo'sh bo'lsa master ishlatiladi.
+          ref: ${{ vars.TG_REF || 'master' }}
           submodules: recursive
-
-      - name: Checkout REDgram files
-        uses: actions/checkout@v4
-        with:
-          repository: yusufcik/Redapk
-          ref: main
-          path: redgram
 
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: zulu
           java-version: '17'
+          cache: gradle
 
       - name: Accept Android licenses
         run: |
@@ -78,15 +75,328 @@ jobs:
           grep -E "APP_ID = $TG_API_ID;" "$FILE" || { echo "APP_ID almashmadi"; exit 1; }
           grep -q "APP_HASH = \"$TG_API_HASH\";" "$FILE" || { echo "APP_HASH almashmadi"; exit 1; }
 
-      - name: Change app name to REDgram
+      - name: Apply REDgram branding (name, icon, splash, red theme)
         run: |
-          find . -path "*/src/main/res/values/strings.xml" -print0 |
-          xargs -0 sed -i 's/>Telegram</>REDgram</g'
+          pip install pillow --quiet
+          python3 - <<'PYEOF'
+          #!/usr/bin/env python3
+          """
+          REDgram branding (build.yml ichida).
 
-          FILE="TMessagesProj/src/main/java/org/telegram/ui/DialogsActivity.java"
-          if [ -f "$FILE" ]; then
-            sed -i 's/new SpannableStringBuilder(getString(R.string.AppName))/new SpannableStringBuilder("REDgram")/' "$FILE"
-          fi
+          Hech qachon build'ni yiqitmaydi: har bir qadam alohida, topilmasa OGOHLANTIRISH
+          yozadi va davom etadi. Oxirida natijalar jadvali chiqadi.
+          Shuningdek `recon/` papkasiga kerakli manba fayllarni nusxalaydi (keyingi bosqich uchun).
+          """
+          import base64
+          import glob
+          import io
+          import os
+          import re
+          import shutil
+          import subprocess
+          import sys
+
+          JAVA_ROOT = "TMessagesProj/src/main/java"
+          RES_ROOT = "TMessagesProj/src/main/res"
+          RESULTS = []
+          ICON_B64 = """
+          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
+          NhSHk5iOCfIU9Usfk4sgAA==
+          """
+
+
+          def step(name):
+              def deco(fn):
+                  try:
+                      msg = fn()
+                      RESULTS.append((name, "OK", msg or ""))
+                  except Exception as e:  # noqa: BLE001
+                      RESULTS.append((name, "OGOHLANTIRISH", f"{type(e).__name__}: {e}"))
+                  return fn
+              return deco
+
+
+          def read(path):
+              with open(path, encoding="utf-8") as f:
+                  return f.read()
+
+
+          def write(path, text):
+              with open(path, "w", encoding="utf-8") as f:
+                  f.write(text)
+
+
+          # ------------------------------------------------------------------ 0. asl (o'zgartirilmagan) manba nusxalari - keyingi bosqich uchun manba nusxalari
+          @step("Manba fayllar nusxasi (recon)")
+          def recon():
+              os.makedirs("recon", exist_ok=True)
+              keep = ["org/telegram/ui/SettingsActivity.java", "org/telegram/ui/DialogsActivity.java",
+                      "org/telegram/ui/ActionBar/Theme.java", "org/telegram/messenger/MessagesController.java",
+                      "org/telegram/messenger/MessagesStorage.java", "org/telegram/ui/Cells/ChatMessageCell.java",
+                      "org/telegram/messenger/LocaleController.java"]
+              for rel in keep:
+                  s = f"{JAVA_ROOT}/{rel}"
+                  if os.path.exists(s):
+                      shutil.copy(s, "recon/" + os.path.basename(rel))
+              for p in glob.glob("**/src/main/res/values/styles.xml", recursive=True)[:1]:
+                  shutil.copy(p, "recon/styles.xml")
+              with open("recon/files.txt", "w") as f:
+                  for p in sorted(glob.glob("**/res/**/*launcher*", recursive=True)):
+                      f.write(p + "\n")
+              pats = ["TL_account_updateStatus", "TL_updateDeleteMessages", "TL_updateEditMessage",
+                      "TL_updateEditChannelMessage", "TL_updateDeleteChannelMessages", "applicationIdSuffix"]
+              with open("recon/grep.txt", "w") as f:
+                  for pat in pats:
+                      out = subprocess.run(["grep", "-rn", "--include=*.java", "--include=*.gradle", pat, "."],
+                                           capture_output=True, text=True).stdout.splitlines()[:40]
+                      f.write(f"\n##### {pat}\n" + "\n".join(out) + "\n")
+              sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+              write("recon/commit.txt", sha + "\n")
+              return f"Telegram commit: {sha[:10]}"
+
+
+          # ------------------------------------------------------------------ 1. nom
+          @step("Ilova nomi (REDgram)")
+          def app_name():
+              # a) strings.xml
+              for p in glob.glob("**/src/main/res/values/strings.xml", recursive=True):
+                  t = read(p)
+                  n = t.replace(">Telegram<", ">REDgram<")
+                  if n != t:
+                      write(p, n)
+              # b) Java: serverdan keladigan tarjima o'rniga to'g'ridan-to'g'ri "REDgram"
+              pat = re.compile(
+                  r'(?:LocaleController\.)?getString\(\s*(?:"AppName"\s*,\s*)?R\.string\.AppName\s*\)')
+              total = 0
+              for p in glob.glob(f"{JAVA_ROOT}/**/*.java", recursive=True):
+                  t = read(p)
+                  n, c = pat.subn('"REDgram"', t)
+                  if c:
+                      write(p, n)
+                      total += c
+              if total == 0:
+                  raise RuntimeError("AppName ishlatilgan joy topilmadi (recon ga qarang)")
+              return f"{total} joyda almashtirildi"
+
+
+          # ------------------------------------------------------------------ 2. ikonka
+          @step("Ilova ikonkasi")
+          def icons():
+              from PIL import Image, ImageDraw
+              src = Image.open(io.BytesIO(base64.b64decode(ICON_B64))).convert("RGB")
+              bg = (15, 18, 23)
+
+              def fit(size, round_mask=False):
+                  im = src.resize((size, size), Image.LANCZOS).convert("RGBA")
+                  if round_mask:
+                      m = Image.new("L", (size * 4, size * 4), 0)
+                      ImageDraw.Draw(m).ellipse([0, 0, size * 4 - 1, size * 4 - 1], fill=255)
+                      im.putalpha(m.resize((size, size), Image.LANCZOS))
+                  return im
+
+              changed = 0
+              for p in glob.glob("**/res/mipmap-*/ic_launcher*", recursive=True):
+                  if "anydpi" in p or not p.lower().endswith((".png", ".webp")):
+                      continue
+                  try:
+                      size = Image.open(p).size[0]
+                  except Exception:  # noqa: BLE001
+                      continue
+                  im = fit(size, "round" in os.path.basename(p))
+                  fmt = "WEBP" if p.lower().endswith(".webp") else "PNG"
+                  im.save(p, fmt)
+                  changed += 1
+
+              # adaptive ikonka (Android 8+): fon rangi + o'rtaga joylangan rasm
+              res = f"{RES_ROOT}"
+              os.makedirs(f"{res}/drawable-nodpi", exist_ok=True)
+              canvas = Image.new("RGBA", (432, 432), (0, 0, 0, 0))
+              sz = int(432 * 0.74)
+              inner = src.resize((sz, sz), Image.LANCZOS).convert("RGBA")
+              off = (432 - inner.size[0]) // 2
+              canvas.alpha_composite(inner, (off, off))
+              canvas.save(f"{res}/drawable-nodpi/redgram_icon_fg.png")
+              os.makedirs(f"{res}/values", exist_ok=True)
+              write(f"{res}/values/redgram_colors.xml",
+                    '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n'
+                    f'    <color name="redgram_icon_bg">#{bg[0]:02X}{bg[1]:02X}{bg[2]:02X}</color>\n</resources>\n')
+              adaptive = ('<?xml version="1.0" encoding="utf-8"?>\n'
+                          '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n'
+                          '    <background android:drawable="@color/redgram_icon_bg"/>\n'
+                          '    <foreground android:drawable="@drawable/redgram_icon_fg"/>\n'
+                          '</adaptive-icon>\n')
+              xml_n = 0
+              for p in glob.glob("**/res/mipmap-anydpi*/ic_launcher*.xml", recursive=True):
+                  write(p, adaptive)
+                  xml_n += 1
+              if changed == 0 and xml_n == 0:
+                  raise RuntimeError("ic_launcher fayllari topilmadi (recon/files.txt ga qarang)")
+              return f"{changed} ta rasm, {xml_n} ta adaptive xml"
+
+
+          # ------------------------------------------------------------------ 3. kirish ekrani
+          @step("Kirish ekrani (Xush Kelibsiz)")
+          def splash():
+              os.makedirs(f"{RES_ROOT}/drawable-nodpi", exist_ok=True)
+              from PIL import Image, ImageDraw, ImageFont
+              S = 960
+              sp = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+              d = ImageDraw.Draw(sp)
+              def font(sz):
+                  try:
+                      return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", sz)
+                  except Exception:  # noqa: BLE001
+                      return ImageFont.load_default(size=sz)
+              size = 150
+              while size > 20 and d.textlength("Kelibsiz", font=font(size)) > 470:
+                  size -= 4
+              f = font(size)
+              lh = size * 1.15
+              y0 = S / 2 - lh
+              for i, line in enumerate(("Xush", "Kelibsiz")):
+                  w = d.textlength(line, font=f)
+                  d.text(((S - w) / 2, y0 + i * lh), line, font=f, fill=(220, 38, 38, 255))
+              sp.save(f"{RES_ROOT}/drawable-nodpi/redgram_splash.png")
+              hit = 0
+              for p in glob.glob("**/src/main/res/values*/styles.xml", recursive=True):
+                  t = read(p)
+                  m = re.search(r'(<style\s+name="Theme\.TMessages\.Start"[^>]*>)', t)
+                  if m and "windowSplashScreenAnimatedIcon" not in t:
+                      add = ('\n        <item name="android:windowSplashScreenAnimatedIcon">@drawable/redgram_splash</item>'
+                             '\n        <item name="android:windowSplashScreenBackground">#FFFFFF</item>')
+                      write(p, t[:m.end()] + add + t[m.end():])
+                      hit += 1
+              if hit == 0:
+                  raise RuntimeError("Theme.TMessages.Start topilmadi (recon/styles ga qarang)")
+              return f"{hit} ta styles.xml o'zgardi"
+
+
+          # ------------------------------------------------------------------ 4. qizil mavzu
+          HOOK = '''
+              // ---- REDgram: havorang tuslarni qizilga o'tkazish ----
+              private static final java.util.concurrent.ConcurrentHashMap<Integer, Integer> redgramCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+              private static int redgramTint(int c) {
+                  Integer cached = redgramCache.get(c);
+                  if (cached != null) {
+                      return cached;
+                  }
+                  int r = (c >> 16) & 0xff, g = (c >> 8) & 0xff, b = c & 0xff;
+                  int max = Math.max(r, Math.max(g, b)), min = Math.min(r, Math.min(g, b));
+                  int out = c;
+                  if (max - min >= 40) {
+                      float[] hsv = new float[3];
+                      android.graphics.Color.colorToHSV(c, hsv);
+                      if (hsv[0] >= 170f && hsv[0] <= 265f && hsv[1] >= 0.25f) {
+                          hsv[0] = 356f;
+                          out = android.graphics.Color.HSVToColor((c >>> 24) & 0xff, hsv);
+                      }
+                  }
+                  if (redgramCache.size() < 4096) {
+                      redgramCache.put(c, out);
+                  }
+                  return out;
+              }
+
+              public static int getColor(int key, boolean[] isDefault, boolean ignoreAnimation) {
+                  return redgramTint(getColorRedgramOrig(key, isDefault, ignoreAnimation));
+              }
+
+          '''
+
+
+          @step("Qizil mavzu (Theme.getColor)")
+          def theme():
+              p = f"{JAVA_ROOT}/org/telegram/ui/ActionBar/Theme.java"
+              t = read(p)
+              sig = "public static int getColor(int key, boolean[] isDefault, boolean ignoreAnimation) {"
+              if t.count(sig) != 1:
+                  raise RuntimeError(f"getColor imzosi {t.count(sig)} marta uchradi, 1 bo'lishi kerak")
+              t = t.replace(sig, HOOK + "    private static int getColorRedgramOrig(int key, boolean[] isDefault, boolean ignoreAnimation) {")
+              write(p, t)
+              return "getColor o'raldi"
+
+
+          print("\n=== REDgram branding natijalari ===")
+          for name, status, msg in RESULTS:
+              print(f"[{status}] {name} {('- ' + msg) if msg else ''}")
+          sys.exit(0)
+          PYEOF
+
+      - name: Save source snapshots for inspection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recon-sources
+          path: recon/
+          if-no-files-found: ignore
 
       - name: Change package name
         run: |
