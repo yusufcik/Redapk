@@ -1,0 +1,1287 @@
+name: Build REDgram AAB
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Free up disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/local/lib/android/sdk/ndk/25.* /usr/local/lib/android/sdk/ndk/26.* /usr/local/lib/android/sdk/ndk/27.*
+          sudo docker image prune --all --force
+          df -h /
+
+      - name: Checkout Telegram source
+        uses: actions/checkout@v4
+        with:
+          repository: DrKLO/Telegram
+          # Barqaror bo'lishi uchun: GitHub > Settings > Variables > Actions ga
+          # TG_REF nomli o'zgaruvchi qo'shing va qiymatiga commit SHA yozing.
+          # Bo'sh bo'lsa master ishlatiladi.
+          ref: ${{ vars.TG_REF || 'master' }}
+          submodules: recursive
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+          cache: gradle
+
+      - name: Accept Android licenses
+        run: |
+          mkdir -p "$ANDROID_HOME/licenses"
+          echo -e "\n24333f8a63b6825ea9c5514f83c2829b004d1fee" > "$ANDROID_HOME/licenses/android-sdk-license"
+          echo -e "\nd56f5187479451eabf01fb78af6dfcb131a6481e" >> "$ANDROID_HOME/licenses/android-sdk-license"
+
+      - name: Install Android SDK components
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          "$SDKM" "platform-tools"
+          "$SDKM" "platforms;android-35"
+          "$SDKM" "build-tools;35.0.0"
+          "$SDKM" "ndk;21.4.7075529"
+          "$SDKM" "cmake;3.10.2.4988404"
+          "$SDKM" --list_installed
+
+      - name: Set Telegram API keys
+        env:
+          TG_API_ID: ${{ secrets.TG_API_ID }}
+          TG_API_HASH: ${{ secrets.TG_API_HASH }}
+        run: |
+          if [ -z "$TG_API_ID" ] || [ -z "$TG_API_HASH" ]; then
+            echo "TG_API_ID yoki TG_API_HASH GitHub Secrets'da yo'q"
+            exit 1
+          fi
+
+          FILE="TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java"
+          sed -i "s/APP_ID = [0-9]*;/APP_ID = $TG_API_ID;/" "$FILE"
+          sed -i "s/APP_HASH = \".*\";/APP_HASH = \"$TG_API_HASH\";/" "$FILE"
+
+          grep -E "APP_ID = $TG_API_ID;" "$FILE" || { echo "APP_ID almashmadi"; exit 1; }
+          grep -q "APP_HASH = \"$TG_API_HASH\";" "$FILE" || { echo "APP_HASH almashmadi"; exit 1; }
+
+      - name: Apply REDgram branding (name, icon, splash, red theme, features)
+        env:
+          REDGRAM_SERVER: ${{ vars.REDGRAM_SERVER }}
+          REDGRAM_CRASHLOG: ${{ vars.REDGRAM_CRASHLOG }}
+        run: |
+          pip install pillow --quiet
+          python3 - <<'PYEOF'
+          #!/usr/bin/env python3
+          """
+          REDgram branding (build.yml ichida).
+
+          Hech qachon build'ni yiqitmaydi: har bir qadam alohida, topilmasa OGOHLANTIRISH
+          yozadi va davom etadi. Oxirida natijalar jadvali chiqadi.
+          Shuningdek `recon/` papkasiga kerakli manba fayllarni nusxalaydi (keyingi bosqich uchun).
+          """
+          import base64
+          import glob
+          import io
+          import os
+          import re
+          import shutil
+          import subprocess
+          import sys
+
+          JAVA_ROOT = "TMessagesProj/src/main/java"
+          RES_ROOT = "TMessagesProj/src/main/res"
+          RESULTS = []
+          ICON_B64 = """
+          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
+          NhSHk5iOCfIU9Usfk4sgAA==
+          """
+
+
+          def step(name):
+              def deco(fn):
+                  try:
+                      msg = fn()
+                      RESULTS.append((name, "OK", msg or ""))
+                  except Exception as e:  # noqa: BLE001
+                      RESULTS.append((name, "OGOHLANTIRISH", f"{type(e).__name__}: {e}"))
+                  return fn
+              return deco
+
+
+          def read(path):
+              with open(path, encoding="utf-8") as f:
+                  return f.read()
+
+
+          def write(path, text):
+              with open(path, "w", encoding="utf-8") as f:
+                  f.write(text)
+
+
+          # ------------------------------------------------------------------ 0. asl (o'zgartirilmagan) manba nusxalari - keyingi bosqich uchun manba nusxalari
+          @step("Manba fayllar nusxasi (recon)")
+          def recon():
+              os.makedirs("recon", exist_ok=True)
+              keep = ["org/telegram/ui/SettingsActivity.java", "org/telegram/ui/DialogsActivity.java",
+                      "org/telegram/ui/ActionBar/Theme.java", "org/telegram/messenger/MessagesController.java",
+                      "org/telegram/messenger/MessagesStorage.java", "org/telegram/ui/Cells/ChatMessageCell.java",
+                      "org/telegram/messenger/LocaleController.java", "org/telegram/messenger/MessageObject.java",
+                      "org/telegram/messenger/SendMessagesHelper.java", "org/telegram/messenger/NotificationsController.java",
+                      "org/telegram/ui/ActionBar/BaseFragment.java", "org/telegram/ui/ChatActivity.java",
+                      "org/telegram/ui/LaunchActivity.java", "org/telegram/messenger/ApplicationLoader.java"]
+              for rel in keep:
+                  s = f"{JAVA_ROOT}/{rel}"
+                  if os.path.exists(s):
+                      shutil.copy(s, "recon/" + os.path.basename(rel))
+              for p in glob.glob("**/src/main/res/values*/styles.xml", recursive=True):
+                  shutil.copy(p, "recon/" + p.replace("/", "_"))
+              for p in glob.glob("**/src/main/AndroidManifest.xml", recursive=True):
+                  shutil.copy(p, "recon/" + p.replace("/", "_"))
+              with open("recon/files.txt", "w") as f:
+                  for p in sorted(glob.glob("**/res/**/*launcher*", recursive=True)):
+                      f.write(p + "\n")
+              pats = ["TL_account_updateStatus", "TL_updateDeleteMessages", "TL_updateEditMessage",
+                      "TL_updateEditChannelMessage", "TL_updateDeleteChannelMessages", "applicationIdSuffix",
+                      "ic_launcher_dr", "windowSplashScreen", "intro_tg_plane", "setDefaultUncaughtExceptionHandler"]
+              with open("recon/grep.txt", "w") as f:
+                  for pat in pats:
+                      out = subprocess.run(["grep", "-rn", "--include=*.java", "--include=*.gradle", "--include=*.xml", pat, "."],
+                                           capture_output=True, text=True).stdout.splitlines()[:40]
+                      f.write(f"\n##### {pat}\n" + "\n".join(out) + "\n")
+              sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+              write("recon/commit.txt", sha + "\n")
+              return f"Telegram commit: {sha[:10]}"
+
+
+          # ------------------------------------------------------------------ 1. nom
+          @step("Ilova nomi (REDgram)")
+          def app_name():
+              # a) strings.xml
+              for p in glob.glob("**/src/main/res/values/strings.xml", recursive=True):
+                  t = read(p)
+                  n = t.replace(">Telegram<", ">REDgram<")
+                  if n != t:
+                      write(p, n)
+              # b) Java: serverdan keladigan tarjima o'rniga to'g'ridan-to'g'ri "REDgram"
+              pat = re.compile(
+                  r'(?:LocaleController\.)?getString\(\s*(?:"AppName"\s*,\s*)?R\.string\.AppName\s*\)')
+              total = 0
+              for p in glob.glob(f"{JAVA_ROOT}/**/*.java", recursive=True):
+                  t = read(p)
+                  n, c = pat.subn('"REDgram"', t)
+                  if c:
+                      write(p, n)
+                      total += c
+              if total == 0:
+                  raise RuntimeError("AppName ishlatilgan joy topilmadi (recon ga qarang)")
+              return f"{total} joyda almashtirildi"
+
+
+          # ------------------------------------------------------------------ 2. ikonka
+          @step("Ilova ikonkasi")
+          def icons():
+              from PIL import Image, ImageDraw
+              src = Image.open(io.BytesIO(base64.b64decode(ICON_B64))).convert("RGB")
+              bg = (15, 18, 23)
+
+              def fit(size, round_mask=False):
+                  im = src.resize((size, size), Image.LANCZOS).convert("RGBA")
+                  if round_mask:
+                      m = Image.new("L", (size * 4, size * 4), 0)
+                      ImageDraw.Draw(m).ellipse([0, 0, size * 4 - 1, size * 4 - 1], fill=255)
+                      im.putalpha(m.resize((size, size), Image.LANCZOS))
+                  return im
+
+              changed = 0
+              for p in glob.glob("**/res/mipmap-*/ic_launcher*", recursive=True):
+                  if "anydpi" in p or not p.lower().endswith((".png", ".webp")):
+                      continue
+                  try:
+                      size = Image.open(p).size[0]
+                  except Exception:  # noqa: BLE001
+                      continue
+                  im = fit(size, "round" in os.path.basename(p))
+                  fmt = "WEBP" if p.lower().endswith(".webp") else "PNG"
+                  im.save(p, fmt)
+                  changed += 1
+
+              # adaptive ikonka (Android 8+): fon rangi + o'rtaga joylangan rasm
+              res = f"{RES_ROOT}"
+              os.makedirs(f"{res}/drawable-nodpi", exist_ok=True)
+              canvas = Image.new("RGBA", (432, 432), (0, 0, 0, 0))
+              sz = int(432 * 0.74)
+              inner = src.resize((sz, sz), Image.LANCZOS).convert("RGBA")
+              off = (432 - inner.size[0]) // 2
+              canvas.alpha_composite(inner, (off, off))
+              canvas.save(f"{res}/drawable-nodpi/redgram_icon_fg.png")
+              os.makedirs(f"{res}/values", exist_ok=True)
+              write(f"{res}/values/redgram_colors.xml",
+                    '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n'
+                    f'    <color name="redgram_icon_bg">#{bg[0]:02X}{bg[1]:02X}{bg[2]:02X}</color>\n</resources>\n')
+              adaptive = ('<?xml version="1.0" encoding="utf-8"?>\n'
+                          '<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n'
+                          '    <background android:drawable="@color/redgram_icon_bg"/>\n'
+                          '    <foreground android:drawable="@drawable/redgram_icon_fg"/>\n'
+                          '</adaptive-icon>\n')
+              xml_n = 0
+              for p in glob.glob("**/res/mipmap-anydpi*/ic_launcher*.xml", recursive=True):
+                  write(p, adaptive)
+                  xml_n += 1
+              if changed == 0 and xml_n == 0:
+                  raise RuntimeError("ic_launcher fayllari topilmadi (recon/files.txt ga qarang)")
+              return f"{changed} ta rasm, {xml_n} ta adaptive xml"
+
+
+          # ------------------------------------------------------------------ 3. kirish ekrani
+          @step("Kirish ekrani (Xush Kelibsiz)")
+          def splash():
+              os.makedirs(f"{RES_ROOT}/drawable-nodpi", exist_ok=True)
+              from PIL import Image, ImageDraw, ImageFont
+              S = 960
+              sp = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+              d = ImageDraw.Draw(sp)
+              def font(sz):
+                  try:
+                      return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", sz)
+                  except Exception:  # noqa: BLE001
+                      return ImageFont.load_default(size=sz)
+              size = 150
+              while size > 20 and d.textlength("Kelibsiz", font=font(size)) > 470:
+                  size -= 4
+              f = font(size)
+              lh = size * 1.15
+              y0 = S / 2 - lh
+              for i, line in enumerate(("Xush", "Kelibsiz")):
+                  w = d.textlength(line, font=f)
+                  d.text(((S - w) / 2, y0 + i * lh), line, font=f, fill=(220, 38, 38, 255))
+              sp.save(f"{RES_ROOT}/drawable-nodpi/redgram_splash.png")
+              hit = 0
+              for p in glob.glob("**/src/main/res/values*/styles.xml", recursive=True):
+                  t = read(p)
+                  m = re.search(r'(<style\s+name="Theme\.TMessages\.Start"[^>]*>)', t)
+                  if m and "windowSplashScreenAnimatedIcon" not in t:
+                      add = ('\n        <item name="android:windowSplashScreenAnimatedIcon">@drawable/redgram_splash</item>'
+                             '\n        <item name="android:windowSplashScreenBackground">#FFFFFF</item>')
+                      write(p, t[:m.end()] + add + t[m.end():])
+                      hit += 1
+              if hit == 0:
+                  raise RuntimeError("Theme.TMessages.Start topilmadi (recon/styles ga qarang)")
+              return f"{hit} ta styles.xml o'zgardi"
+
+
+          # ------------------------------------------------------------------ 4. qizil mavzu
+          HOOK = '''
+              // ---- REDgram: havorang tuslarni qizilga o'tkazish ----
+              public static int getColor(int key, boolean[] isDefault, boolean ignoreAnimation) {
+                  return org.telegram.messenger.RedConfig.tint(getColorRedgramOrig(key, isDefault, ignoreAnimation));
+              }
+
+          '''
+
+
+          @step("Qizil mavzu (Theme.getColor)")
+          def theme():
+              p = f"{JAVA_ROOT}/org/telegram/ui/ActionBar/Theme.java"
+              t = read(p)
+              sig = "public static int getColor(int key, boolean[] isDefault, boolean ignoreAnimation) {"
+              if t.count(sig) != 1:
+                  raise RuntimeError(f"getColor imzosi {t.count(sig)} marta uchradi, 1 bo'lishi kerak")
+              t = t.replace(sig, HOOK + "    private static int getColorRedgramOrig(int key, boolean[] isDefault, boolean ignoreAnimation) {")
+              write(p, t)
+              return "getColor o'raldi"
+
+
+
+          # ------------------------------------------------------------------ 5. REDgram funksiyalari
+          RED_CONFIG_JAVA = r"""package org.telegram.messenger;
+
+          import android.content.Context;
+          import android.content.SharedPreferences;
+
+          import org.json.JSONObject;
+          import org.telegram.tgnet.TLRPC;
+
+          import java.io.BufferedReader;
+          import java.io.InputStreamReader;
+          import java.io.OutputStream;
+          import java.net.HttpURLConnection;
+          import java.net.URL;
+          import java.nio.charset.StandardCharsets;
+          import java.security.SecureRandom;
+          import java.util.LinkedHashMap;
+          import java.util.Map;
+
+          /**
+           * REDgram sozlamalari, hisoblagich va yordamchi mantiq.
+           * Hamma metodlar xavfsiz: xato bo'lsa ilova ishida to'xtab qolmaydi.
+           */
+          public class RedConfig {
+
+              // build paytida GitHub Variable REDGRAM_SERVER dan to'ldiriladi. Bo'sh bo'lsa hisoblagich o'chiq.
+              public static final String SERVER = "__REDGRAM_SERVER__";
+              private static final String MARK = "\n\n\u21A9 Avval: ";
+
+              private static volatile boolean loaded;
+              private static volatile boolean fBlockApk = true;
+              private static volatile boolean fKeepDeleted = true;
+              private static volatile boolean fKeepEdited = true;
+              private static volatile boolean fGhost = false;
+
+              private static volatile long lastPing;
+              private static volatile int statUsers = -1;
+              private static volatile int statOnline = -1;
+              private static volatile String statLatest = "";
+              private static volatile String statUrl = "";
+              private static volatile String statAnnounce = "";
+
+              private static final Map<String, String> seen = new LinkedHashMap<String, String>(256, 0.75f, true) {
+                  @Override
+                  protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
+                      return size() > 600;
+                  }
+              };
+
+              private static SharedPreferences prefs() {
+                  return ApplicationLoader.applicationContext.getSharedPreferences("redgram_prefs", Context.MODE_PRIVATE);
+              }
+
+              private static void load() {
+                  if (loaded) {
+                      return;
+                  }
+                  synchronized (RedConfig.class) {
+                      if (loaded) {
+                          return;
+                      }
+                      try {
+                          SharedPreferences p = prefs();
+                          fBlockApk = p.getBoolean("block_apk", true);
+                          fKeepDeleted = p.getBoolean("keep_deleted", true);
+                          fKeepEdited = p.getBoolean("keep_edited", true);
+                          fGhost = p.getBoolean("ghost", false);
+                          loaded = true;
+                      } catch (Throwable ignore) {
+                      }
+                  }
+              }
+
+              public static boolean blockApk() {
+                  load();
+                  return fBlockApk;
+              }
+
+              public static boolean keepDeleted() {
+                  load();
+                  return fKeepDeleted;
+              }
+
+              public static boolean keepEdited() {
+                  load();
+                  return fKeepEdited;
+              }
+
+              public static boolean ghost() {
+                  load();
+                  return fGhost;
+              }
+
+              public static void set(String key, boolean value) {
+                  load();
+                  if ("block_apk".equals(key)) {
+                      fBlockApk = value;
+                  } else if ("keep_deleted".equals(key)) {
+                      fKeepDeleted = value;
+                  } else if ("keep_edited".equals(key)) {
+                      fKeepEdited = value;
+                  } else if ("ghost".equals(key)) {
+                      fGhost = value;
+                  }
+                  try {
+                      prefs().edit().putBoolean(key, value).apply();
+                  } catch (Throwable ignore) {
+                  }
+              }
+
+              // ------------------------------------------------------------ APK
+              public static boolean isApk(TLRPC.Document d, String name) {
+                  try {
+                      if (d == null) {
+                          return false;
+                      }
+                      String mime = d.mime_type;
+                      if (mime != null && mime.toLowerCase().contains("android.package-archive")) {
+                          return true;
+                      }
+                      if (name != null) {
+                          String n = name.toLowerCase();
+                          return n.endsWith(".apk") || n.endsWith(".xapk") || n.endsWith(".apks");
+                      }
+                  } catch (Throwable ignore) {
+                  }
+                  return false;
+              }
+
+              // ------------------------------------------------------------ tahrirlangan xabarlar
+              public static void remember(MessageObject m) {
+                  try {
+                      if (m == null || m.messageOwner == null || !keepEdited()) {
+                          return;
+                      }
+                      TLRPC.Message o = m.messageOwner;
+                      String text = o.message;
+                      if (text == null || text.isEmpty()) {
+                          return;
+                      }
+                      int i = text.indexOf(MARK);
+                      if (i > 0) {
+                          text = text.substring(0, i);
+                      }
+                      synchronized (seen) {
+                          seen.put(o.dialog_id + ":" + o.id, text);
+                      }
+                  } catch (Throwable ignore) {
+                  }
+              }
+
+              public static void onEdited(TLRPC.Message m) {
+                  try {
+                      if (m == null || m.message == null || !keepEdited()) {
+                          return;
+                      }
+                      String key = m.dialog_id + ":" + m.id;
+                      String fresh = m.message;
+                      String old;
+                      synchronized (seen) {
+                          old = seen.get(key);
+                          seen.put(key, fresh);
+                      }
+                      if (old == null || old.isEmpty() || old.equals(fresh)) {
+                          return;
+                      }
+                      m.message = fresh + MARK + old;
+                  } catch (Throwable ignore) {
+                  }
+              }
+
+              // ------------------------------------------------------------ hisoblagich
+              public static boolean serverConfigured() {
+                  return SERVER != null && SERVER.length() > 8;
+              }
+
+              public static int users() {
+                  return statUsers;
+              }
+
+              public static int online() {
+                  return statOnline;
+              }
+
+              public static String latest() {
+                  return statLatest;
+              }
+
+              public static String updateUrl() {
+                  return statUrl;
+              }
+
+              public static String announce() {
+                  return statAnnounce;
+              }
+
+              private static String installId() {
+                  SharedPreferences p = prefs();
+                  String id = p.getString("install_id", null);
+                  if (id == null || id.length() < 16) {
+                      byte[] b = new byte[16];
+                      new SecureRandom().nextBytes(b);
+                      StringBuilder sb = new StringBuilder();
+                      for (byte x : b) {
+                          sb.append(String.format("%02x", x & 0xff));
+                      }
+                      id = sb.toString();
+                      p.edit().putString("install_id", id).apply();
+                  }
+                  return id;
+              }
+
+              public static void pingIfNeeded() {
+                  try {
+                      if (!serverConfigured()) {
+                          return;
+                      }
+                      long now = System.currentTimeMillis();
+                      if (now - lastPing < 120000L) {
+                          return;
+                      }
+                      lastPing = now;
+                      new Thread(new Runnable() {
+                          @Override
+                          public void run() {
+                              request(true);
+                          }
+                      }, "red-ping").start();
+                  } catch (Throwable ignore) {
+                  }
+              }
+
+              public static void fetchStats(final Runnable done) {
+                  if (!serverConfigured()) {
+                      return;
+                  }
+                  new Thread(new Runnable() {
+                      @Override
+                      public void run() {
+                          request(false);
+                          if (done != null) {
+                              AndroidUtilities.runOnUIThread(done);
+                          }
+                      }
+                  }, "red-stats").start();
+              }
+
+              private static void request(boolean ping) {
+                  HttpURLConnection c = null;
+                  try {
+                      String base = SERVER.endsWith("/") ? SERVER.substring(0, SERVER.length() - 1) : SERVER;
+                      URL u = new URL(base + (ping ? "/api/red/ping" : "/api/red/stats"));
+                      c = (HttpURLConnection) u.openConnection();
+                      c.setConnectTimeout(8000);
+                      c.setReadTimeout(8000);
+                      if (ping) {
+                          c.setRequestMethod("POST");
+                          c.setDoOutput(true);
+                          c.setRequestProperty("Content-Type", "application/json");
+                          byte[] body = ("{\"id\":\"" + installId() + "\"}").getBytes(StandardCharsets.UTF_8);
+                          OutputStream os = c.getOutputStream();
+                          os.write(body);
+                          os.close();
+                      }
+                      if (c.getResponseCode() != 200) {
+                          return;
+                      }
+                      BufferedReader r = new BufferedReader(new InputStreamReader(c.getInputStream(), StandardCharsets.UTF_8));
+                      StringBuilder sb = new StringBuilder();
+                      String line;
+                      while ((line = r.readLine()) != null) {
+                          sb.append(line);
+                      }
+                      r.close();
+                      JSONObject j = new JSONObject(sb.toString());
+                      statUsers = j.optInt("users", -1);
+                      statOnline = j.optInt("online", -1);
+                      statLatest = j.optString("latest", "");
+                      statUrl = j.optString("url", "");
+                      statAnnounce = j.optString("announce", "");
+                  } catch (Throwable ignore) {
+                  } finally {
+                      if (c != null) {
+                          c.disconnect();
+                      }
+                  }
+              }
+
+              // ------------------------------------------------------------ mavzu (havorang -> qizil)
+              private static final java.util.concurrent.ConcurrentHashMap<Integer, Integer> tintCache =
+                      new java.util.concurrent.ConcurrentHashMap<>();
+
+              public static int tint(int c) {
+                  try {
+                      Integer cached = tintCache.get(c);
+                      if (cached != null) {
+                          return cached;
+                      }
+                      int r = (c >> 16) & 0xff, g = (c >> 8) & 0xff, b = c & 0xff;
+                      int max = Math.max(r, Math.max(g, b)), min = Math.min(r, Math.min(g, b));
+                      int out = c;
+                      if (max - min >= 40) {
+                          float[] hsv = new float[3];
+                          android.graphics.Color.colorToHSV(c, hsv);
+                          if (hsv[0] >= 170f && hsv[0] <= 265f && hsv[1] >= 0.25f) {
+                              hsv[0] = 356f;
+                              out = android.graphics.Color.HSVToColor((c >>> 24) & 0xff, hsv);
+                          }
+                      }
+                      if (tintCache.size() < 4096) {
+                          tintCache.put(c, out);
+                      }
+                      return out;
+                  } catch (Throwable e) {
+                      return c;
+                  }
+              }
+
+              // ------------------------------------------------------------ xatolik jurnali (sinov bosqichi uchun)
+              public static void installCrashLog(final Context app) {
+                  try {
+                      final java.io.File f = new java.io.File(app.getFilesDir(), "redgram_crash.txt");
+                      try {
+                          if (f.exists()) {
+                              StringBuilder sb = new StringBuilder();
+                              java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader(f));
+                              String line;
+                              while ((line = r.readLine()) != null && sb.length() < 6000) {
+                                  sb.append(line).append('\n');
+                              }
+                              r.close();
+                              android.content.ClipboardManager cm =
+                                      (android.content.ClipboardManager) app.getSystemService(Context.CLIPBOARD_SERVICE);
+                              cm.setPrimaryClip(android.content.ClipData.newPlainText("REDgram xatolik", sb.toString()));
+                              f.delete();
+                              android.widget.Toast.makeText(app, "REDgram: oldingi xatolik matni nusxalandi",
+                                      android.widget.Toast.LENGTH_LONG).show();
+                          }
+                      } catch (Throwable ignore) {
+                      }
+                      final Thread.UncaughtExceptionHandler prev = Thread.getDefaultUncaughtExceptionHandler();
+                      Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+                          @Override
+                          public void uncaughtException(Thread t, Throwable e) {
+                              try {
+                                  String s = android.util.Log.getStackTraceString(e);
+                                  if (s.length() > 6000) {
+                                      s = s.substring(0, 6000);
+                                  }
+                                  java.io.FileWriter w = new java.io.FileWriter(f);
+                                  w.write(s);
+                                  w.close();
+                              } catch (Throwable ignore) {
+                              }
+                              if (prev != null) {
+                                  prev.uncaughtException(t, e);
+                              }
+                          }
+                      });
+                  } catch (Throwable ignore) {
+                  }
+              }
+          }
+          """
+
+          RED_DIALOG_JAVA = r"""package org.telegram.messenger;
+
+          import android.app.Dialog;
+          import android.content.Context;
+          import android.content.res.ColorStateList;
+          import android.graphics.Typeface;
+          import android.graphics.drawable.ColorDrawable;
+          import android.graphics.drawable.GradientDrawable;
+          import android.os.Build;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.view.ViewGroup;
+          import android.widget.CompoundButton;
+          import android.widget.LinearLayout;
+          import android.widget.ScrollView;
+          import android.widget.Switch;
+          import android.widget.TextView;
+
+          import org.telegram.messenger.browser.Browser;
+          import org.telegram.ui.ActionBar.Theme;
+
+          /**
+           * "REDgram sozlamalari" oynasi. Oddiy Android ko'rinishlaridan yasalgan, shuning uchun
+           * Telegramning ichki fragment tizimiga bog'liq emas.
+           */
+          public class RedSettingsDialog {
+
+              private static final int RED = 0xFFDC2626;
+
+              private final Context context;
+              private final Dialog dialog;
+              private TextView usersView;
+              private TextView onlineView;
+
+              public static void show(Context context) {
+                  try {
+                      new RedSettingsDialog(context);
+                  } catch (Throwable e) {
+                      FileLog.e(e);
+                  }
+              }
+
+              private static int dp(int v) {
+                  return AndroidUtilities.dp(v);
+              }
+
+              private TextView text(String s, int sp, int color, boolean bold) {
+                  TextView t = new TextView(context);
+                  t.setText(s);
+                  t.setTextColor(color);
+                  t.setTextSize(sp);
+                  if (bold) {
+                      t.setTypeface(Typeface.DEFAULT_BOLD);
+                  }
+                  return t;
+              }
+
+              private void header(LinearLayout parent, String s) {
+                  TextView t = text(s, 13, RED, true);
+                  t.setPadding(0, dp(18), 0, dp(4));
+                  parent.addView(t, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+              }
+
+              private TextView valueRow(LinearLayout parent, String label, String value, int fg) {
+                  LinearLayout row = new LinearLayout(context);
+                  row.setOrientation(LinearLayout.HORIZONTAL);
+                  row.setPadding(0, dp(8), 0, dp(8));
+                  TextView l = text(label, 16, fg, false);
+                  row.addView(l, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                  TextView v = text(value, 16, RED, true);
+                  row.addView(v, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                  parent.addView(row, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                  return v;
+              }
+
+              private void switchRow(LinearLayout parent, String title, String sub, boolean checked, final String key, int fg, int gray) {
+                  LinearLayout row = new LinearLayout(context);
+                  row.setOrientation(LinearLayout.HORIZONTAL);
+                  row.setGravity(Gravity.CENTER_VERTICAL);
+                  row.setPadding(0, dp(8), 0, dp(8));
+                  LinearLayout col = new LinearLayout(context);
+                  col.setOrientation(LinearLayout.VERTICAL);
+                  col.addView(text(title, 16, fg, false));
+                  col.addView(text(sub, 12, gray, false));
+                  row.addView(col, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                  final Switch sw = new Switch(context);
+                  sw.setChecked(checked);
+                  if (Build.VERSION.SDK_INT >= 23) {
+                      int[][] states = new int[][]{new int[]{android.R.attr.state_checked}, new int[]{}};
+                      sw.setThumbTintList(new ColorStateList(states, new int[]{RED, 0xFFB0B0B0}));
+                      sw.setTrackTintList(new ColorStateList(states, new int[]{0x66DC2626, 0x55888888}));
+                  }
+                  sw.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+                      @Override
+                      public void onCheckedChanged(CompoundButton b, boolean on) {
+                          RedConfig.set(key, on);
+                      }
+                  });
+                  row.addView(sw, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                  row.setOnClickListener(new View.OnClickListener() {
+                      @Override
+                      public void onClick(View v) {
+                          sw.toggle();
+                      }
+                  });
+                  parent.addView(row, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+              }
+
+              private static String num(int n, boolean configured) {
+                  if (n >= 0) {
+                      return String.valueOf(n);
+                  }
+                  return configured ? "..." : "-";
+              }
+
+              private RedSettingsDialog(Context ctx) {
+                  this.context = ctx;
+                  final int bg = Theme.getColor(Theme.key_windowBackgroundWhite);
+                  final int fg = Theme.getColor(Theme.key_windowBackgroundWhiteBlackText);
+                  final int gray = Theme.getColor(Theme.key_windowBackgroundWhiteGrayText2);
+                  final int card = Theme.getColor(Theme.key_windowBackgroundGray);
+
+                  dialog = new Dialog(ctx, android.R.style.Theme_DeviceDefault_NoActionBar);
+
+                  LinearLayout root = new LinearLayout(ctx);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setBackgroundColor(bg);
+                  root.setFitsSystemWindows(true);
+
+                  TextView title = text("\u2039  REDgram sozlamalari", 20, fg, true);
+                  title.setPadding(dp(16), dp(14), dp(16), dp(14));
+                  title.setOnClickListener(new View.OnClickListener() {
+                      @Override
+                      public void onClick(View v) {
+                          dialog.dismiss();
+                      }
+                  });
+                  root.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+                  ScrollView scroll = new ScrollView(ctx);
+                  LinearLayout body = new LinearLayout(ctx);
+                  body.setOrientation(LinearLayout.VERTICAL);
+                  body.setPadding(dp(16), 0, dp(16), dp(24));
+                  scroll.addView(body, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                  root.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+                  final boolean configured = RedConfig.serverConfigured();
+
+                  String note = RedConfig.announce();
+                  if (note != null && note.length() > 0) {
+                      TextView n = text(note, 14, fg, false);
+                      n.setPadding(dp(14), dp(12), dp(14), dp(12));
+                      GradientDrawable nd = new GradientDrawable();
+                      nd.setColor(card);
+                      nd.setCornerRadius(dp(14));
+                      n.setBackground(nd);
+                      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                      lp.topMargin = dp(8);
+                      body.addView(n, lp);
+                  }
+
+                  header(body, "Foydalanuvchilar");
+                  usersView = valueRow(body, "Yuklaganlar", num(RedConfig.users(), configured), fg);
+                  onlineView = valueRow(body, "Hozir online", num(RedConfig.online(), configured), fg);
+                  if (!configured) {
+                      body.addView(text("Hisoblagich serveri ulanmagan", 12, gray, false));
+                  }
+
+                  header(body, "Himoya");
+                  switchRow(body, "APK fayllarni bloklash", "APK fayl o'rniga 'APK BLOKLANDI' chiqadi", RedConfig.blockApk(), "block_apk", fg, gray);
+
+                  header(body, "Xabarlar");
+                  switchRow(body, "O'chirilgan xabarlarni tiklash", "Narigi tomon o'chirsa ham sizda qoladi", RedConfig.keepDeleted(), "keep_deleted", fg, gray);
+                  switchRow(body, "Tahrirlangan xabarlarni saqlash", "Eski matn xabar ostida ko'rinadi", RedConfig.keepEdited(), "keep_edited", fg, gray);
+
+                  header(body, "Maxfiylik");
+                  switchRow(body, "Sharpa rejimi", "Boshqalarga offline bo'lib ko'rinasiz", RedConfig.ghost(), "ghost", fg, gray);
+
+                  final String latest = RedConfig.latest();
+                  final String url = RedConfig.updateUrl();
+                  if (latest != null && latest.length() > 0) {
+                      header(body, "Ilova");
+                      TextView up = text("Oxirgi versiya: " + latest + (url != null && url.startsWith("https://") ? "  (yuklab olish)" : ""), 16, fg, false);
+                      up.setPadding(0, dp(8), 0, dp(8));
+                      if (url != null && url.startsWith("https://")) {
+                          up.setOnClickListener(new View.OnClickListener() {
+                              @Override
+                              public void onClick(View v) {
+                                  Browser.openUrl(context, url);
+                              }
+                          });
+                      }
+                      body.addView(up);
+                  }
+
+                  TextView btn = text("Hamkorlik uchun", 16, 0xFFFFFFFF, true);
+                  btn.setGravity(Gravity.CENTER);
+                  GradientDrawable gd = new GradientDrawable();
+                  gd.setColor(RED);
+                  gd.setCornerRadius(dp(26));
+                  btn.setBackground(gd);
+                  btn.setPadding(0, dp(15), 0, dp(15));
+                  btn.setOnClickListener(new View.OnClickListener() {
+                      @Override
+                      public void onClick(View v) {
+                          dialog.dismiss();
+                          Browser.openUrl(context, "https://t.me/m27yt");
+                      }
+                  });
+                  LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                  blp.topMargin = dp(28);
+                  body.addView(btn, blp);
+
+                  dialog.setContentView(root);
+                  if (dialog.getWindow() != null) {
+                      dialog.getWindow().setBackgroundDrawable(new ColorDrawable(bg));
+                      dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+                  }
+                  dialog.show();
+
+                  RedConfig.fetchStats(new Runnable() {
+                      @Override
+                      public void run() {
+                          try {
+                              usersView.setText(num(RedConfig.users(), configured));
+                              onlineView.setText(num(RedConfig.online(), configured));
+                          } catch (Throwable ignore) {
+                          }
+                      }
+                  });
+              }
+          }
+          """
+
+          MC = f"{JAVA_ROOT}/org/telegram/messenger/MessagesController.java"
+          CMC = f"{JAVA_ROOT}/org/telegram/ui/Cells/ChatMessageCell.java"
+          SA = f"{JAVA_ROOT}/org/telegram/ui/SettingsActivity.java"
+
+
+          def patch(path, old, new):
+              t = read(path)
+              n = t.count(old)
+              if n != 1:
+                  raise RuntimeError(f"{os.path.basename(path)}: {n} ta mos keldi (1 bo'lishi kerak)")
+              write(path, t.replace(old, new))
+
+
+          @step("REDgram sinflari (RedConfig, sozlamalar oynasi)")
+          def red_files():
+              d = f"{JAVA_ROOT}/org/telegram/messenger"
+              server = re.sub(r"[^A-Za-z0-9:/._-]", "", os.environ.get("REDGRAM_SERVER", "")).rstrip("/")
+              write(f"{d}/RedConfig.java", RED_CONFIG_JAVA.replace("__REDGRAM_SERVER__", server))
+              write(f"{d}/RedSettingsDialog.java", RED_DIALOG_JAVA)
+              return "server: " + (server or "ko'rsatilmagan (hisoblagich o'chiq)")
+
+
+          @step("Sozlamalarda 'REDgram sozlamalari' qatori")
+          def red_settings_row():
+              old1 = "items.add(SettingCell.Factory.of(1, IconBackgroundColors.BLUE.top"
+              new1 = ('items.add(SettingCell.Factory.of(100, IconBackgroundColors.RED.top, IconBackgroundColors.RED.bottom, '
+                      'R.drawable.settings_privacy, "REDgram sozlamalari", "Qo\'shimcha imkoniyatlar"));\n        ' + old1)
+              patch(SA, old1, new1)
+              old2 = "            case 1:\n                presentSettingFragment(new UserInfoActivity());"
+              new2 = ("            case 100:\n                org.telegram.messenger.RedSettingsDialog.show(getParentActivity());\n"
+                      "                break;\n" + old2)
+              patch(SA, old2, new2)
+              return "qator va bosish qo'shildi"
+
+
+          @step("Sharpa rejimi + hisoblagich ping")
+          def red_ghost():
+              old = ("if (!ignoreSetOnline && getConnectionsManager().getPauseTime() == 0 && "
+                     "ApplicationLoader.isScreenOn && !ApplicationLoader.mainInterfacePausedStageQueue) {")
+              new = "RedConfig.pingIfNeeded();\n            if (!RedConfig.ghost() && " + old[len("if ("):]
+              patch(MC, old, new)
+              return "online holati o'raldi"
+
+
+          @step("O'chirilgan xabarlarni saqlash")
+          def red_keep_deleted():
+              for cls in ("TL_updateDeleteMessages", "TL_updateDeleteChannelMessages"):
+                  old = "} else if (baseUpdate instanceof TL_update." + cls + ") {"
+                  new = ("} else if (baseUpdate instanceof TL_update." + cls + " && RedConfig.keepDeleted()) {\n"
+                         "                // REDgram: o'chirilgan xabarlar saqlanadi\n            " + old)
+                  patch(MC, old, new)
+              return "2 ta joy o'zgardi"
+
+
+          @step("Tahrirlangan xabarlarni saqlash")
+          def red_keep_edited():
+              old = ("                if (message.out && message.message == null) {\n"
+                     "                    message.message = \"\";\n"
+                     "                    message.attachPath = \"\";\n"
+                     "                }\n\n"
+                     "                ImageLoader.saveMessageThumbs(message);")
+              new = old.replace("                ImageLoader.saveMessageThumbs(message);",
+                                "                RedConfig.onEdited(message);\n                ImageLoader.saveMessageThumbs(message);")
+              patch(MC, old, new)
+              old2 = "boolean lastInChatList) {\n        if (attachedToWindow && !frozen) {"
+              new2 = "boolean lastInChatList) {\n        org.telegram.messenger.RedConfig.remember(messageObject);\n        if (attachedToWindow && !frozen) {"
+              patch(CMC, old2, new2)
+              return "2 ta joy o'zgardi"
+
+
+          @step("APK bloklash")
+          def red_block_apk():
+              old = "String name = FileLoader.getDocumentFileName(documentAttach);"
+              new = ("String name = (org.telegram.messenger.RedConfig.blockApk() && org.telegram.messenger.RedConfig.isApk("
+                     "documentAttach, FileLoader.getDocumentFileName(documentAttach))) ? \"APK BLOKLANDI\" : "
+                     "FileLoader.getDocumentFileName(documentAttach);")
+              patch(CMC, old, new)
+              old2 = "    void didPressButton(boolean animated, boolean video) {\n"
+              new2 = (old2 + "        if (org.telegram.messenger.RedConfig.blockApk() && documentAttach != null && "
+                      "org.telegram.messenger.RedConfig.isApk(documentAttach, FileLoader.getDocumentFileName(documentAttach))) {\n"
+                      "            return;\n        }\n")
+              patch(CMC, old2, new2)
+              return "nom va bosish bloklandi"
+
+
+
+          @step("Xatolik jurnali (ApplicationLoader)")
+          def red_crashlog():
+              if os.environ.get("REDGRAM_CRASHLOG", "1") == "0":
+                  return "o'chirilgan (REDGRAM_CRASHLOG=0)"
+              p = f"{JAVA_ROOT}/org/telegram/messenger/ApplicationLoader.java"
+              t = read(p)
+              m = re.search(r"public\s+void\s+onCreate\s*\(\s*\)\s*\{\s*super\.onCreate\(\)\s*;", t)
+              if not m:
+                  raise RuntimeError("Application.onCreate topilmadi")
+              write(p, t[:m.end()] + "\n        RedConfig.installCrashLog(this);" + t[m.end():])
+              return "yoqildi"
+
+
+          @step("Sarlavha (Telegram -> REDgram)")
+          def red_title():
+              p = f"{JAVA_ROOT}/org/telegram/ui/DialogsActivity.java"
+              t = read(p)
+              old = "ssb.setSpan(new ImageSpan(logoDrawable), 0, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);"
+              if t.count(old) != 1:
+                  raise RuntimeError(f"DialogsActivity: {t.count(old)} ta mos keldi (1 bo'lishi kerak)")
+              new = ("ssb.setSpan(new android.text.style.ForegroundColorSpan(0xFFDC2626), 0, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);\n"
+                     "                ssb.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD), 0, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);")
+              write(p, t.replace(old, new))
+              return "logotip rasmi o'rniga REDgram matni"
+
+
+          @step("Kirish ekrani (tg_splash_320)")
+          def red_splash320():
+              from PIL import Image, ImageDraw, ImageFont
+              files = glob.glob("**/res/drawable*/tg_splash_320.*", recursive=True)
+              if not files:
+                  raise RuntimeError("tg_splash_320 topilmadi")
+              S = 960
+              img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+              d = ImageDraw.Draw(img)
+              def font(sz):
+                  try:
+                      return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", sz)
+                  except Exception:  # noqa: BLE001
+                      return ImageFont.load_default(size=sz)
+              size = 150
+              while size > 20 and d.textlength("Kelibsiz", font=font(size)) > 470:
+                  size -= 4
+              f = font(size)
+              lh = size * 1.15
+              y0 = S / 2 - lh
+              for i, line in enumerate(("Xush", "Kelibsiz")):
+                  w = d.textlength(line, font=f)
+                  d.text(((S - w) / 2, y0 + i * lh), line, font=f, fill=(220, 38, 38, 255))
+              raster = [p for p in files if p.lower().endswith((".png", ".webp"))]
+              for p in files:
+                  if p not in raster:
+                      os.remove(p)
+              for p in raster:
+                  try:
+                      size_px = Image.open(p).size
+                  except Exception:  # noqa: BLE001
+                      continue
+                  im = img.resize(size_px, Image.LANCZOS)
+                  if p.lower().endswith(".webp"):
+                      im.save(p, "WEBP", lossless=True)
+                  else:
+                      im.save(p, "PNG")
+              if not raster:
+                  os.makedirs(f"{RES_ROOT}/drawable-nodpi", exist_ok=True)
+                  img.save(f"{RES_ROOT}/drawable-nodpi/tg_splash_320.png")
+              return f"{len(files)} ta fayl almashtirildi"
+
+
+          @step("Hisob ikonkasi (ic_launcher_dr)")
+          def red_account_icon():
+              from PIL import Image
+              files = glob.glob("**/res/drawable-*dpi/ic_launcher_dr.*", recursive=True)
+              if not files:
+                  raise RuntimeError("ic_launcher_dr topilmadi")
+              for p in files:
+                  subprocess.run(["git", "checkout", "--", p], capture_output=True)
+              src = Image.open(io.BytesIO(base64.b64decode(ICON_B64))).convert("RGBA")
+              n = 0
+              for p in files:
+                  try:
+                      size_px = Image.open(p).size
+                  except Exception:  # noqa: BLE001
+                      continue
+                  im = src.resize(size_px, Image.LANCZOS)
+                  if p.lower().endswith(".webp"):
+                      im.save(p, "WEBP", lossless=True)
+                  else:
+                      im.save(p, "PNG")
+                  n += 1
+              return f"{n} ta fayl REDgram ikonkasiga almashtirildi"
+
+
+          @step("Manifest (zaxira nusxa o'chiq, http havolalar saqlanadi)")
+          def red_manifest():
+              mans = glob.glob("**/src/main/AndroidManifest.xml", recursive=True)
+              for p in mans:
+                  subprocess.run(["git", "checkout", "--", p], capture_output=True)
+              n = 0
+              for p in mans:
+                  t = read(p)
+                  s2 = t.replace('android:allowBackup="true"', 'android:allowBackup="false"')
+                  if s2 != t:
+                      write(p, s2)
+                      n += 1
+              for p in glob.glob("**/src/main/res/xml/network_security_config.xml", recursive=True):
+                  subprocess.run(["git", "checkout", "--", p], capture_output=True)
+              if n == 0:
+                  raise RuntimeError("allowBackup topilmadi")
+              return f"{n} ta manifest: allowBackup=false"
+
+
+          print("\n=== REDgram branding natijalari ===")
+          for name, status, msg in RESULTS:
+              print(f"[{status}] {name} {('- ' + msg) if msg else ''}")
+          sys.exit(0)
+          PYEOF
+
+      - name: Save source snapshots for inspection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recon-sources
+          path: recon/
+          if-no-files-found: ignore
+
+      - name: Change package name
+        run: |
+          NEW_PKG="com.yusufcik.redgram"
+
+          echo "ESKI:"
+          grep -rn "APP_PACKAGE" gradle.properties TMessagesProj_App/build.gradle || true
+
+          # 1) APP_PACKAGE qiymatini almashtirish
+          sed -i -E "s/^([[:space:]]*APP_PACKAGE[[:space:]]*=[[:space:]]*).*/\1$NEW_PKG/" gradle.properties
+
+          # 2) .beta / .web qo'shimchalarini olib tashlash
+          sed -i '/applicationIdSuffix/d' TMessagesProj_App/build.gradle
+
+          echo "YANGI:"
+          grep -n "APP_PACKAGE" gradle.properties
+          grep -n "applicationIdSuffix" TMessagesProj_App/build.gradle || echo "suffix yo'q"
+
+          grep -qE "APP_PACKAGE[[:space:]]*=[[:space:]]*$NEW_PKG" gradle.properties || { echo "Paket nomi almashmadi"; exit 1; }
+
+          # 3) Firebase fayli bo'lsa
+          find . -name "google-services.json" -not -path "*/build/*" -print0 |
+          xargs -0 -r sed -i -E "s/\"package_name\": *\"[^\"]+\"/\"package_name\": \"$NEW_PKG\"/"
+
+      - name: Set unique version code
+        run: |
+          # Play har yuklashda versionCode oshishini talab qiladi
+          NEW_CODE=$((10000 + GITHUB_RUN_NUMBER))
+          echo "Eski:"
+          grep -n "APP_VERSION_CODE" gradle.properties || echo "APP_VERSION_CODE topilmadi"
+
+          sed -i -E "s/^([[:space:]]*APP_VERSION_CODE[[:space:]]*=[[:space:]]*).*/\1$NEW_CODE/" gradle.properties
+
+          echo "Yangi:"
+          grep -n "APP_VERSION_CODE" gradle.properties || echo "OGOHLANTIRISH: versionCode almashmadi"
+
+      - name: Prepare Gradle
+        run: chmod +x gradlew
+
+      - name: Build AAB
+        run: |
+          ./gradlew :TMessagesProj_App:bundleAfatRelease \
+            --stacktrace \
+            --no-daemon
+
+      - name: Sign AAB
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "Keystore GitHub Secrets sozlanmagan."
+            exit 1
+          fi
+
+          echo "$KEYSTORE_BASE64" | base64 --decode > redgram-upload.jks
+
+          AAB=$(find TMessagesProj_App/build/outputs/bundle -name "*.aab" | head -n 1)
+
+          if [ -z "$AAB" ]; then
+            echo "AAB fayl topilmadi"
+            exit 1
+          fi
+
+          # Eski (Gradle qo'ygan) imzolarni o'chirish
+          zip -d "$AAB" 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.DSA' 'META-INF/*.EC' || true
+
+          jarsigner \
+            -keystore redgram-upload.jks \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -keypass "$KEY_PASSWORD" \
+            "$AAB" "$KEY_ALIAS"
+
+          jarsigner -verify "$AAB"
+
+          # Tekshiruv 1: aynan bitta imzo bo'lishi kerak
+          SIGS=$(unzip -l "$AAB" | grep -cE 'META-INF/.*\.SF$' || true)
+          echo "Imzolar soni: $SIGS"
+          [ "$SIGS" = "1" ] || { echo "XATO: imzolar soni 1 emas"; exit 1; }
+
+          # Tekshiruv 2: paket nomi to'g'ri bo'lishi kerak
+          unzip -p "$AAB" base/manifest/AndroidManifest.xml | grep -aq "com.yusufcik.redgram" \
+            || { echo "XATO: AAB ichida paket nomi com.yusufcik.redgram emas"; exit 1; }
+
+          mkdir -p output
+          cp "$AAB" output/REDgram.aab
+
+          rm -f redgram-upload.jks
+
+      - name: Upload REDgram AAB (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: REDgram-AAB
+          path: output/REDgram.aab
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Create GitHub Release (zip'siz .aab)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: REDgram build ${{ github.run_number }}
+          files: output/REDgram.aab
