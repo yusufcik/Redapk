@@ -173,6 +173,101 @@ jobs:
           VwefuWZReaMeqk0Nq66T5/icrYKhlVrrWt6oGg6PfMoW5RlhsRjM86jKbZ+CbSCUU+3uQre9+QAA3TBQDjE1HbK6hNMHaevUqIts
           NhSHk5iOCfIU9Usfk4sgAA==
           """
+          PLANE_B64 = """
+          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
+          """
 
 
           def step(name):
@@ -1061,7 +1156,7 @@ jobs:
                   return "o'chirilgan (REDGRAM_CRASHLOG=0)"
               p = f"{JAVA_ROOT}/org/telegram/messenger/ApplicationLoader.java"
               t = read(p)
-              m = re.search(r"public\s+void\s+onCreate\s*\(\s*\)\s*\{\s*super\.onCreate\(\)\s*;", t)
+              m = re.search(r"public\s+void\s+onCreate\s*\(\s*\)\s*\{.*?super\.onCreate\(\)\s*;", t, re.S)
               if not m:
                   raise RuntimeError("Application.onCreate topilmadi")
               write(p, t[:m.end()] + "\n        RedConfig.installCrashLog(this);" + t[m.end():])
@@ -1083,27 +1178,20 @@ jobs:
 
           @step("Kirish ekrani (tg_splash_320)")
           def red_splash320():
-              from PIL import Image, ImageDraw, ImageFont
+              from PIL import Image, ImageDraw
               files = glob.glob("**/res/drawable*/tg_splash_320.*", recursive=True)
               if not files:
                   raise RuntimeError("tg_splash_320 topilmadi")
               S = 960
+              D = 600
               img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-              d = ImageDraw.Draw(img)
-              def font(sz):
-                  try:
-                      return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", sz)
-                  except Exception:  # noqa: BLE001
-                      return ImageFont.load_default(size=sz)
-              size = 150
-              while size > 20 and d.textlength("Kelibsiz", font=font(size)) > 470:
-                  size -= 4
-              f = font(size)
-              lh = size * 1.15
-              y0 = S / 2 - lh
-              for i, line in enumerate(("Xush", "Kelibsiz")):
-                  w = d.textlength(line, font=f)
-                  d.text(((S - w) / 2, y0 + i * lh), line, font=f, fill=(220, 38, 38, 255))
+              big = Image.new("L", (D * 4, D * 4), 0)
+              ImageDraw.Draw(big).ellipse([0, 0, D * 4 - 1, D * 4 - 1], fill=255)
+              circle = big.resize((D, D), Image.LANCZOS)
+              off = (S - D) // 2
+              img.paste((8, 8, 10, 255), (off, off), circle)
+              plane = Image.open(io.BytesIO(base64.b64decode(PLANE_B64))).convert("L").resize((D, D), Image.LANCZOS)
+              img.paste((237, 32, 48, 255), (off, off), plane)
               raster = [p for p in files if p.lower().endswith((".png", ".webp"))]
               for p in files:
                   if p not in raster:
@@ -1121,7 +1209,7 @@ jobs:
               if not raster:
                   os.makedirs(f"{RES_ROOT}/drawable-nodpi", exist_ok=True)
                   img.save(f"{RES_ROOT}/drawable-nodpi/tg_splash_320.png")
-              return f"{len(files)} ta fayl almashtirildi"
+              return f"{len(files)} ta fayl: qora doira + qizil samolyot"
 
 
           @step("Hisob ikonkasi (ic_launcher_dr)")
@@ -1165,6 +1253,23 @@ jobs:
               if n == 0:
                   raise RuntimeError("allowBackup topilmadi")
               return f"{n} ta manifest: allowBackup=false"
+
+
+          @step("Qo'shimcha recon (sarlavha, intro)")
+          def recon2():
+              os.makedirs("recon", exist_ok=True)
+              for name in ("IntroActivity.java", "DialogStoriesCell.java", "StoriesController.java"):
+                  for p in glob.glob(f"**/{name}", recursive=True)[:1]:
+                      shutil.copy(p, "recon/" + name)
+              pats = ["telegram_logo", "R.string.AppName", "Page1Title", "intro_", '"Telegram"']
+              with open("recon/grep2.txt", "w") as f:
+                  for pat in pats:
+                      out = subprocess.run(["grep", "-rnF", "--include=*.java", "--include=*.xml", pat, "TMessagesProj/src/main"],
+                                           capture_output=True, text=True).stdout.splitlines()[:60]
+                      f.write(f"\n##### {pat}\n" + "\n".join(o[:200] for o in out) + "\n")
+              names = sorted(glob.glob("TMessagesProj/src/main/res/drawable*/intro_*") + glob.glob("TMessagesProj/src/main/res/drawable*/telegram_*"))
+              write("recon/intro_files.txt", "\n".join(names))
+              return f"{len(names)} ta rasm ro'yxatga olindi"
 
 
           print("\n=== REDgram branding natijalari ===")
