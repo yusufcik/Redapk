@@ -255,7 +255,7 @@ jobs:
           3wyx9bVtwWyvTVYJAUE77702YwEY/hwlhF/8eb/nsYTlNsSuN7qWyOzhzsXquPfJw4FcgTiZJQQgz9vx7rw5pETfqqNAPnq8I6gL
           bCexhKDTbvOr8SUGYJHziKTF249AQI1w8kqYmcL3nHc+qKsRRdaIRJ0v/B3YCscpIrrN25PzikxNSbe8/BYgSzhe7jTx9odz5pGB
           OZPKJyr2+1faPfzCRxDUvSaTXUIEz3aObBeLNOT2dOdnkH0vWYCdfwxqe60SrBAAdGLbOzVzpUGA+a5p6/evXPejp5MOsITjFxC1
-          bTdvhyUeGIVZkhf/v8B21yrECgFIJ958q7aOCttAg60vbyOXJRxfPMc5skMs8nDsIhKIvU/s1R4EdKV7pUgIADr+5ts1c8WYd0Eh
+          bTdvhyUeGIVZkhf/v8C21yrECgFIJ958q7aOCttAg60vbyOXJRxfPMc5skMs8nDsIhKIvU/s1R4EdKV7pUgIADr+5ts1c8WYd0Eh
           4O4nDpMO6l6FypGQtO00b6Ol3thrRHw3s3qNJQxCRNy2fc58yjurocxFpO4rT2BwTyCoKAnBc5zGHWKxm39ERATQHS+/GuD9XpUl
           IQBQ/I235tShyiQqmEd1qOmLJz8lljAwCnq2fXS7Xu6CyPeWWO1++NgxlyUMADnBdPL1N2rn63wjohd/6QlwWMIgSJjTxPaa3/KW
           AojRRCRCAHFgywfaYwmDViMmtu1eOFWOltUgEBJuu7vL5VgYvBrRPfieVUej3ZWHSK7z0h9EgI2wUiTEIfKaY9v3zZsNso83pSH/
@@ -462,6 +462,7 @@ jobs:
               t = t.replace(sig, HOOK + "    private static int getColorRedgramOrig(int key, boolean[] isDefault, boolean ignoreAnimation) {")
               write(p, t)
               return "getColor o'raldi"
+
 
 
           # ------------------------------------------------------------------ 5. REDgram funksiyalari
@@ -994,7 +995,7 @@ jobs:
                   LinearLayout body = new LinearLayout(ctx);
                   body.setOrientation(LinearLayout.VERTICAL);
                   body.setPadding(dp(16), 0, dp(16), dp(24));
-                  scroll.addView(body, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                  scroll.addView(body, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
                   root.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
                   final boolean configured = RedConfig.serverConfigured();
@@ -1170,6 +1171,7 @@ jobs:
               return "nom va bosish bloklandi"
 
 
+
           @step("Xatolik jurnali (ApplicationLoader)")
           def red_crashlog():
               if os.environ.get("REDGRAM_CRASHLOG", "1") == "0":
@@ -1256,18 +1258,15 @@ jobs:
               return f"{n} ta fayl REDgram ikonkasiga almashtirildi"
 
 
-          @step("Manifest (zaxira nusxa o'chiq, autoVerify o'chirildi)")
+          @step("Manifest (zaxira nusxa o'chiq, http havolalar saqlanadi)")
           def red_manifest():
               mans = glob.glob("**/src/main/AndroidManifest.xml", recursive=True)
               for p in mans:
                   subprocess.run(["git", "checkout", "--", p], capture_output=True)
               n = 0
-              av_count = 0
               for p in mans:
                   t = read(p)
                   s2 = t.replace('android:allowBackup="true"', 'android:allowBackup="false"')
-                  s2, c = re.subn(r'\s*android:autoVerify="true"', '', s2)
-                  av_count += c
                   if s2 != t:
                       write(p, s2)
                       n += 1
@@ -1275,7 +1274,7 @@ jobs:
                   subprocess.run(["git", "checkout", "--", p], capture_output=True)
               if n == 0:
                   raise RuntimeError("allowBackup topilmadi")
-              return f"{n} ta manifest: allowBackup=false, {av_count} ta autoVerify o'chirildi"
+              return f"{n} ta manifest: allowBackup=false"
 
 
           @step("Qo'shimcha recon (sarlavha, intro)")
@@ -1359,6 +1358,21 @@ jobs:
                   save(out, p)
                   n += 1
               return f"{len(planes)} ta samolyot, {n} ta animatsiya rasmi qizilga o'zgardi"
+
+
+          @step("Qo'shimcha recon 3 (kirish ekrani)")
+          def recon3():
+              os.makedirs("recon", exist_ok=True)
+              for name in ("LoginActivity.java", "ConnectionsManager.java"):
+                  for p in glob.glob(f"**/{name}", recursive=True)[:1]:
+                      shutil.copy(p, "recon/" + name)
+              pats = ["TL_auth_importBotAuthorization", "importBotAuthorization", "TL_auth_signIn", "onAuthSuccess", "new LoginActivity"]
+              with open("recon/grep3.txt", "w") as f:
+                  for pat in pats:
+                      out = subprocess.run(["grep", "-rnF", "--include=*.java", pat, "TMessagesProj/src/main"],
+                                           capture_output=True, text=True).stdout.splitlines()[:60]
+                      f.write(f"\n##### {pat}\n" + "\n".join(o[:200] for o in out) + "\n")
+              return "tayyor"
 
 
           print("\n=== REDgram branding natijalari ===")
