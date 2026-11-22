@@ -80,7 +80,7 @@ jobs:
           REDGRAM_SERVER: ${{ vars.REDGRAM_SERVER }}
           REDGRAM_CRASHLOG: ${{ vars.REDGRAM_CRASHLOG }}
         run: |
-          pip install pillow --quiet
+          pip install pillow numpy --quiet
           python3 - <<'PYEOF'
           #!/usr/bin/env python3
           """
@@ -827,6 +827,28 @@ jobs:
                   } catch (Throwable ignore) {
                   }
               }
+
+              // ------------------------------------------------------------ "REDgram" yozuvi (logotip rasmi o'rniga)
+              public static android.graphics.Bitmap wordmark(int wPx, int hPx) {
+                  android.graphics.Bitmap bm = android.graphics.Bitmap.createBitmap(
+                          Math.max(1, wPx), Math.max(1, hPx), android.graphics.Bitmap.Config.ARGB_8888);
+                  try {
+                      android.graphics.Canvas c = new android.graphics.Canvas(bm);
+                      android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                      p.setColor(0xFFFFFFFF);
+                      p.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+                      p.setTextSize(hPx * 0.95f);
+                      while (p.measureText("REDgram") > wPx && p.getTextSize() > 8f) {
+                          p.setTextSize(p.getTextSize() - 1f);
+                      }
+                      android.graphics.Paint.FontMetrics fm = p.getFontMetrics();
+                      float y = (hPx - (fm.descent - fm.ascent)) / 2f - fm.ascent;
+                      float x = Math.max(0f, (wPx - p.measureText("REDgram")) / 2f);
+                      c.drawText("REDgram", x, y, p);
+                  } catch (Throwable ignore) {
+                  }
+                  return bm;
+              }
           }
           """
 
@@ -1270,6 +1292,72 @@ jobs:
               names = sorted(glob.glob("TMessagesProj/src/main/res/drawable*/intro_*") + glob.glob("TMessagesProj/src/main/res/drawable*/telegram_*"))
               write("recon/intro_files.txt", "\n".join(names))
               return f"{len(names)} ta rasm ro'yxatga olindi"
+
+
+          @step("Stories sarlavhasi (DialogStoriesCell)")
+          def red_stories_title():
+              p = f"{JAVA_ROOT}/org/telegram/ui/Stories/DialogStoriesCell.java"
+              t = read(p)
+              old = "telegramLogoView.setImageResource(R.drawable.telegram_logo_2);"
+              if t.count(old) != 1:
+                  raise RuntimeError(f"DialogStoriesCell: {t.count(old)} ta mos keldi (1 bo'lishi kerak)")
+              new = "telegramLogoView.setImageBitmap(org.telegram.messenger.RedConfig.wordmark(dp(90), dp(22)));"
+              write(p, t.replace(old, new))
+              return "pastga tortganda REDgram matni"
+
+
+          @step("Intro sarlavhasi va qora doira (IntroActivity)")
+          def red_intro_java():
+              p = f"{JAVA_ROOT}/org/telegram/ui/IntroActivity.java"
+              t = read(p)
+              old1 = "ssb.setSpan(new ImageSpan(logoDrawable), 0, ssb.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);"
+              old2 = "paint.setColor(ThemeColors.TELEGRAM_COLOR);"
+              for o in (old1, old2):
+                  if t.count(o) != 1:
+                      raise RuntimeError(f"IntroActivity: '{o[:40]}' {t.count(o)} ta mos keldi (1 bo'lishi kerak)")
+              t = t.replace(old1, 'ssb.replace(0, ssb.length(), "REDgram");')
+              t = t.replace(old2, "paint.setColor(0xFF08080A);")
+              write(p, t)
+              return "sarlavha REDgram, doira qora"
+
+
+          @step("Intro rasmlari (qizil samolyot, qizil animatsiya)")
+          def red_intro_images():
+              from PIL import Image
+              import numpy as np
+              planes = glob.glob("**/res/drawable*/intro_tg_plane.*", recursive=True)
+              if not planes:
+                  raise RuntimeError("intro_tg_plane topilmadi")
+              def save(im, p):
+                  if p.lower().endswith(".webp"):
+                      im.save(p, "WEBP", lossless=True)
+                  else:
+                      im.save(p, "PNG")
+              for p in planes:
+                  im = Image.open(p).convert("RGBA")
+                  a = np.asarray(im).astype(np.float32)
+                  g = a[..., :3].mean(-1, keepdims=True) / 255.0
+                  a[..., :3] = np.clip(np.array([237, 32, 48], dtype=np.float32) * g, 0, 255)
+                  save(Image.fromarray(a.astype("uint8"), "RGBA"), p)
+              n = 0
+              for p in glob.glob("**/res/drawable*/intro_*.*", recursive=True):
+                  if "intro_tg_plane" in p or not p.lower().endswith((".webp", ".png")):
+                      continue
+                  try:
+                      im = Image.open(p).convert("RGBA")
+                  except Exception:  # noqa: BLE001
+                      continue
+                  alpha = im.getchannel("A")
+                  h, s2, v = [np.array(c) for c in im.convert("RGB").convert("HSV").split()]
+                  m = (h >= 120) & (h <= 188) & (s2 >= 64)
+                  if not m.any():
+                      continue
+                  h[m] = 252
+                  out = Image.merge("HSV", [Image.fromarray(x) for x in (h, s2, v)]).convert("RGB")
+                  out.putalpha(alpha)
+                  save(out, p)
+                  n += 1
+              return f"{len(planes)} ta samolyot, {n} ta animatsiya rasmi qizilga o'zgardi"
 
 
           print("\n=== REDgram branding natijalari ===")
